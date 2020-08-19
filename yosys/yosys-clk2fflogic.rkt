@@ -165,6 +165,18 @@
 
 (define-syntax (define-fun stx)
   (syntax-parse stx
+    ; hierarchy function
+    ; TODO: hack that only works for module named top_earlgrey
+    ; also does not gracefully handle cases of 1 or 0 members
+    [(_ (~literal top_earlgrey_h) ((state:id type:id)) (~datum Bool)
+        ((~datum and) ((~datum =) e (field:id (~datum state))) ...))
+     #:with internal-copy-name (format-id stx "internal-copy-~a" #'type)
+     #'(begin
+         (define (fix-mem state)
+           (new-memoization-context
+            (internal-copy-name state [field e] ...)))
+         (provide fix-mem)
+         (trigger-hooks 'fix-mem fix-mem))]
     ; regular case
     [(_ name:id ((input:id input-type)) return-type body:expr)
      #'(begin
