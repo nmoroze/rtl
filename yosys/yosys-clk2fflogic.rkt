@@ -169,25 +169,49 @@
 
 (define-syntax (define-fun stx)
   (syntax-parse stx
-    ; hierarchy function
-    ; TODO: hack that only works for module named top_earlgrey
-    ; also does not gracefully handle cases of 1 or 0 members
-    [(_ (~literal top_earlgrey_h) ((state:id type:id)) (~datum Bool)
-        ((~datum and) ((~datum =) e (field:id (~datum state))) ...))
-     #:with internal-copy-name (format-id stx "internal-copy-~a" #'type)
-     #'(begin
-         (define (fix-mem state)
-           (new-memoization-context
-            (internal-copy-name state [field e] ...)))
-         (provide fix-mem)
-         (trigger-hooks 'fix-mem fix-mem))]
-    ; regular case
+    ; regular case or hierarchy function
     [(_ name:id ((input:id input-type)) return-type body:expr)
-     #'(begin
-         (define/memoize1 (name input)
-           body)
-         (provide name)
-         (trigger-hooks 'name name))]
+     (let ([name-str (symbol->string (syntax->datum #'name))])
+       ; detect hierarchy function or regular function
+       ; the hierarchy function's name ends in a h and does not contain any
+       ; spaces, while all other yosys function names either contain a space or
+       ; end in a number
+       (if (and (equal? (last (string-split name-str "_")) "h")
+                (not (string-contains? name-str " ")))
+           ; hierarchy function
+           ; parse body of hierarchy function
+           (syntax-parse #'body
+             ; no fields
+             [(~datum true)
+              #'(begin
+                  (define (fix-mem input)
+                    input)
+                  (provide fix-mem)
+                  (trigger-hooks 'fix-mem fix-mem))]
+             ; single field
+             [((~datum =) e (field:id (~datum state)))
+              #:with internal-copy-name (format-id stx "internal-copy-~a" #'input-type)
+              #'(begin
+                  (define (fix-mem input)
+                    (new-memoization-context
+                     (internal-copy-name input [field e])))
+                  (provide fix-mem)
+                  (trigger-hooks 'fix-mem fix-mem))]
+             ; multiple fields
+             [((~datum and) ((~datum =) e (field:id (~datum state))) ...)
+              #:with internal-copy-name (format-id stx "internal-copy-~a" #'input-type)
+              #'(begin
+                  (define (fix-mem input)
+                    (new-memoization-context
+                     (internal-copy-name input [field e] ...)))
+                  (provide fix-mem)
+                  (trigger-hooks 'fix-mem fix-mem))])
+           ; regular case
+           #'(begin
+               (define/memoize1 (name input)
+                 body)
+               (provide name)
+               (trigger-hooks 'name name))))]
     ; transition function: treated specially
     ; case 1: when module is purely combinatorial
     [(_ name:id ((state:id type:id) ((~datum next_state) next-type:id)) (~datum Bool)
