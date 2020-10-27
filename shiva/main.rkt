@@ -121,6 +121,15 @@
             (@unsat)
             any-failed))))
 
+; fast path from only-depends-on only
+; provides an approximation of dependence - if #t, then value must depend only on
+; constants, if #f, then value may or may not depend only on constants
+(define (only-depends-on-fast value constants)
+  (define value-symbolics (list->seteq (@symbolics value)))
+  ; not okay to depend on these:
+  (define value-rest-symbolics (set-subtract value-symbolics constants))
+  (set-empty? value-rest-symbolics))
+
 ; symbolic-constructor: returns fully symbolic module
 ; statics: captures static state in module (that can't change at all, e.g. due to dead code); untrusted
 ;
@@ -162,6 +171,20 @@
               ; we could prune it by intersecting it with (@symbolics sn),
               ; but it seems like using a weak set and using gc is actually faster
               ['collect-garbage (collect-garbage)]
+              [(cons 'abstract-or-overapprox-vector args)
+               (define updates
+                 (for/list ([i args])
+                   (define v (get-field sn i))
+                   #:break (not (vector? v))
+                   (cons i
+                         (for/vector ([entry v]
+                                      [num (in-naturals)])
+                           (define ok (only-depends-on-fast entry allowed-dependencies))
+                           (define v* (@fresh-symbolic (format "~a[~a]" i num) (@type-of entry)))
+                           (when ok
+                             (set-add! allowed-dependencies v*))
+                           v*))))
+               (set! sn (update-fields sn updates))]
               [(cons 'abstract args)
                ; like overapproximate, but we are allowed to depend on the fresh value
                ; because we prove that the term we're replacing only depends on inputs
