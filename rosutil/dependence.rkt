@@ -19,7 +19,7 @@
 
 ; is value fully determined by an assignment of concrete values
 ; to the given symbolics?
-(define (only-depends-on value constants)
+(define (only-depends-on value constants #:invariant [invariant (lambda () #t)])
   (define value-symbolics (list->seteq (@symbolics value)))
   ; okay to depend on these:
   (define value-allowed-symbolics (set-intersect value-symbolics constants))
@@ -40,6 +40,8 @@
      (@define-symbolic* fresh (@type-of value))
      (define res
        (@verify
+        #:assume (@assert (invariant))
+        #:guarantee
         (@assert
          (@exists (list fresh)
                   (@forall (set->list value-rest-symbolics)
