@@ -21,6 +21,7 @@
                                 #:inputs (listof (or/c symbol? (cons/c symbol? wire-constant?)))
                                 #:state-getters (listof (cons/c symbol? (-> yosys-module? any))))
                                (#:output-getters (listof (cons/c symbol? (-> yosys-module? any)))
+                                #:fixed-fields (listof (cons/c symbol? any/c))
                                 #:hints (->* (symbol?) #:rest any/c any)
                                 #:print-style (or/c 'full 'names 'none)
                                 #:try-verify-after natural-number/c
@@ -144,6 +145,7 @@
          #:inputs inputs
          #:state-getters state-getters
          #:output-getters [output-getters '()]
+         #:fixed-fields [fixed-fields '()]
          #:hints [hints (lambda _ #f)]
          #:print-style [print-style 'full]
          #:try-verify-after [try-verify-after 0]
@@ -284,6 +286,17 @@
           [(names) (printf "  failed: output ~a not deterministic~n" name)]
           [(full) (printf "  failed: output ~a not deterministic: ~v~n" name value)]))
       #:break any-outputs-failed
+
+      (define any-fixed-fields-failed
+        (for/or ([f fixed-fields])
+          (let ([name (car f)]
+                [expected-val (cdr f)])
+            (define val (get-field sn+1 name))
+            (if (equal? val expected-val) #f (list name val expected-val)))))
+      (when any-fixed-fields-failed
+        (match-define (list name val expected) any-fixed-fields-failed)
+        (printf "  failed: fixed field ~a changed, was ~a, expected ~a~n" name val expected))
+      #:break any-fixed-fields-failed
 
       (set! sn sn+1)))
 
