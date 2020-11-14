@@ -27,7 +27,7 @@
                                 #:print-style (or/c 'full 'names 'none)
                                 #:try-verify-after natural-number/c
                                 #:limit (or/c #f natural-number/c)
-                                #:debug (-> natural-number/c yosys-module? (or/c #f @solution?) (or/c #f yosys-module?)))
+                                #:debug (-> natural-number/c yosys-module? (or/c #f @solution?) any/c (or/c #f yosys-module?)))
                                (or/c #f natural-number/c))]))
 
 (define wire-constant?
@@ -165,6 +165,7 @@
     (for ([cycle (in-naturals)])
       (printf "cycle ~a~n" cycle)
 
+      ;(debug cycle sn #f allowed-dependencies)
       (define+time (any-hints hint-time)
         (define this-hint (hints 'general cycle sn))
         (when this-hint
@@ -175,6 +176,18 @@
               ; we could prune it by intersecting it with (@symbolics sn),
               ; but it seems like using a weak set and using gc is actually faster
               ['collect-garbage (collect-garbage)]
+              [(cons 'abstract-or-overapprox args)
+               (define updates
+                 (for/list ([i args])
+                   (define v (get-field sn i))
+                   (cons i
+                         (let ()
+                          (define ok (only-depends-on-fast v allowed-dependencies))
+                          (define v* (@fresh-symbolic (format "~a" i) (@type-of v)))
+                          (when ok
+                            (set-add! allowed-dependencies v*))
+                           v*))))
+               (set! sn (update-fields sn updates))]
               [(cons 'abstract-or-overapprox-vector args)
                (define updates
                  (for/list ([i args])
@@ -212,6 +225,24 @@
                    (printf "  abstracted ~a in ~a ms~n" i abstract-time)
                    v))
                (set! sn (update-fields sn updates))]
+              [(cons 'abstract-entry args)
+               ; like overapproximate, but we are allowed to depend on the fresh value
+               ; because we prove that the term we're replacing only depends on inputs
+               ;(define allowed-deps-list (set->list allowed-dependencies))
+               (define+time (updates abstract-time)
+                 (define i (car args))
+                 (define mem (get-field sn i))
+                 (define v (vector-ref mem (cdr args)))
+                 (define ok (@unsat? (only-depends-on* v allowed-dependencies)))
+                 (unless ok
+                   (printf "warning: failed to abstract ~a~n" i))
+                 (when ok
+                   (let ([v* (@fresh-symbolic i (@type-of v))])
+                     (set-add! allowed-dependencies v*)
+                     (vector-set! mem (cdr args) v*)))
+                 (cons i mem))
+               (printf "  abstracted mem entry in ~a ms~n" abstract-time)
+               (set! sn (update-fields sn (list updates)))]
               [(cons 'overapproximate args)
                (define updates
                  (for/list ([i args])
@@ -221,11 +252,26 @@
                                   (@fresh-symbolic i (@type-of v))))
                    (cons i v*)))
                (set! sn (update-fields sn updates))]
-              [(cons 'concretize args)
+              [(cons 'concretize-or-abstract args)
                (define updates
                  (for/list ([i args])
                    (define v (get-field sn i))
-                   (cons i (@concretize v))))
+                   (define v* (@concretize v))
+                   (cons i
+                         (if (and (@term? v*) (@unsat? (only-depends-on* v* allowed-dependencies)))
+                             (let ([v** (@fresh-symbolic i (@type-of v*))])
+                               (set-add! allowed-dependencies v**)
+                               v**)
+                             v*))))
+               (set! sn (update-fields sn updates))]
+              [(cons 'concretize args)
+               (define updates
+                 (for/list ([i args])
+                   (define+time (v concretize-time)
+                     (define v (get-field sn i))
+                     (cons i (@concretize v)))
+                   (printf "  concretized ~a in ~a ms~n" i concretize-time)
+                   v))
                (set! sn (update-fields sn updates))])))
         (not (not this-hint)))
       (when any-hints
@@ -258,7 +304,7 @@
                     r)))
             #f))
 
-      (let ([sn* (debug cycle sn res)])
+      (let ([sn* (debug cycle sn res allowed-dependencies)])
         (when sn*
           (set! sn sn*)))
 

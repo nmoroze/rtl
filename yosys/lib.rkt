@@ -8,9 +8,10 @@
  rosutil)
 
 (provide
- = distinct _ select store bvxnor
+ = distinct _ select store bvxnor overapprox-concretize
  (rename-out [$xor xor]
-             [$if ite])
+             [$if ite]
+             [$concretize concretize])
  ; exports from Rosette
  true false ; constants
  (rename-out [! not] [&& and] [|| or]) ; logical
@@ -134,3 +135,25 @@
 
 (define (bvxnor . args)
   (bvnot (apply bvxor args)))
+
+(define cycle (!make-parameter 0))
+
+(define ($concretize name max-cycle s)
+  (when (equal? name "W1D")
+    (cycle (add1 (cycle))))
+  (if (and max-cycle (>= (cycle) max-cycle))
+      s
+      (let ()
+        (define start (!current-inexact-milliseconds))
+        (define v (concretize s))
+        (define end (!current-inexact-milliseconds))
+        (printf "  concretize ~a in ~ams. result: ~a ~n" name (- end start) v)
+        v)))
+
+
+
+(define (overapprox-concretize s)
+  (define c (concretize s))
+  (if (term? c)
+      (fresh-symbolic "overapproxed" (type-of c))
+      c))
