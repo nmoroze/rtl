@@ -18,6 +18,7 @@
                                 #:step (-> yosys-module? yosys-module?)
                                 #:reset symbol?
                                 #:reset-active (or/c 'low 'high)
+                                #:post-reset (-> yosys-module? yosys-module?)
                                 #:inputs (listof (or/c symbol? (cons/c symbol? wire-constant?)))
                                 #:state-getters (listof (cons/c symbol? (-> yosys-module? any))))
                                (#:output-getters (listof (cons/c symbol? (-> yosys-module? any)))
@@ -142,6 +143,7 @@
          #:step step
          #:reset reset
          #:reset-active reset-active
+         #:post-reset post-reset
          #:inputs inputs
          #:state-getters state-getters
          #:output-getters [output-getters '()]
@@ -257,7 +259,11 @@
         (printf "  analyzed state in ~ams~n" (~r state-analysis-time #:precision 1)))
       #:break (or verified (and limit (>= cycle limit)))
 
-      (define+time (sn+1 step-time) (step sn))
+      (define+time (sn+1 step-time)
+        (let ([sn* (step sn)])
+          (if (zero? cycle)
+              (post-reset sn*)
+              sn*)))
       (printf "  stepped in ~ams~n" (~r step-time #:precision 1))
 
       ; check outputs in a similar style as states
