@@ -205,13 +205,22 @@
                ;(define allowed-deps-list (set->list allowed-dependencies))
                (define updates
                  (for/list ([i args])
-                   (define v (get-field sn i))
-                   (define ok (@unsat? (@only-depends-on/unchecked v allowed-dependencies)))
-                   (cons i (if ok
-                               (let ([v* (@fresh-symbolic i (@type-of v))])
-                                 (set-add! allowed-dependencies v*)
-                                 v*)
-                               v))))
+                   (define+time (v abstract-time)
+                     (define v (get-field sn i))
+                     (define ok (@unsat? (only-depends-on* v allowed-dependencies)))
+                     (unless ok
+                       (printf "warning: failed to abstract ~a~n" i))
+                     (cons i (if ok
+                                 (if (vector? v)
+                                     (let ([v* (@fresh-memory-like i v)])
+                                       (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                                       v*)
+                                     (let ([v* (@fresh-symbolic i (@type-of v))])
+                                       (set-add! allowed-dependencies v*)
+                                       v*))
+                                 v)))
+                   (printf "  abstracted ~a in ~a ms~n" i abstract-time)
+                   v))
                (set! sn (update-fields sn updates))]
               [(cons 'overapproximate args)
                (define updates
