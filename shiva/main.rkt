@@ -195,13 +195,22 @@
                ;(define allowed-deps-list (set->list allowed-dependencies))
                (define updates
                  (for/list ([i args])
-                   (define v (get-field sn i))
-                   (define ok (@unsat? (@only-depends-on/unchecked v allowed-dependencies)))
-                   (cons i (if ok
-                               (let ([v* (@fresh-symbolic i (@type-of v))])
-                                 (set-add! allowed-dependencies v*)
-                                 v*)
-                               v))))
+                   (define+time (v abstract-time)
+                     (define v (get-field sn i))
+                     (define ok (@unsat? (only-depends-on* v allowed-dependencies)))
+                     (unless ok
+                       (printf "warning: failed to abstract ~a~n" i))
+                     (cons i (if ok
+                                 (if (vector? v)
+                                     (let ([v* (@fresh-memory-like i v)])
+                                       (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                                       v*)
+                                     (let ([v* (@fresh-symbolic i (@type-of v))])
+                                       (set-add! allowed-dependencies v*)
+                                       v*))
+                                 v)))
+                   (printf "  abstracted ~a in ~a ms~n" i abstract-time)
+                   v))
                (set! sn (update-fields sn updates))]
               [(cons 'overapproximate args)
                (define updates
@@ -300,9 +309,14 @@
             [(pair? i) i] ; pre-set value
             [(eq? i reset) (cons i (if (eq? reset-active 'low) #t #f))] ; special-case reset
             [else ; symbol
-             (define s (@fresh-symbolic i (@type-of (get-field sn i))))
-             (set-add! allowed-dependencies s)
-             (cons i s)])))
+             (define v (get-field sn i))
+             (cons i (if (vector? v)
+                         (let ([v* (@fresh-memory-like i v)])
+                           (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                           v*)
+                         (let ([v* (@fresh-symbolic i (@type-of v))])
+                           (set-add! allowed-dependencies v*)
+                           v*)))])))
       (set! sn (update-fields sn+1 current-inputs))))
   (define t (~r (/ total-time 1000) #:precision 1))
   (if verified
