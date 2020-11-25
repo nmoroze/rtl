@@ -199,6 +199,23 @@
                              (set-add! allowed-dependencies v*))
                            v*))))
                (set! sn (update-fields sn updates))]
+              [(cons 'run-and-replace args)
+               (let ([hints (car args)]
+                     [i (cdr args)])
+                 (printf "  performing auxilary run to get replacement value for ~a:~n" i)
+                 (define res (run-with-hints
+                              symbolic-constructor
+                              #:invariant invariant
+                              #:step step
+                              #:reset reset
+                              #:reset-active reset-active
+                              #:post-reset post-reset
+                              #:inputs inputs
+                              #:hints hints
+                              #:limit cycle))
+                 (if res
+                     (set! sn (update-field sn i (get-field res i)))
+                     (printf "  could not replace field ~a: auxilary execution failed~n")))]
               [(cons 'abstract args)
                ; like overapproximate, but we are allowed to depend on the fresh value
                ; because we prove that the term we're replacing only depends on inputs
@@ -219,7 +236,7 @@
                                        (set-add! allowed-dependencies v*)
                                        v*))
                                  v)))
-                   (printf "  abstracted ~a in ~a ms~n" i abstract-time)
+                   ;(printf "  abstracted ~a in ~a ms~n" i abstract-time)
                    v))
                (set! sn (update-fields sn updates))]
               [(cons 'overapproximate args)
@@ -235,7 +252,10 @@
                (define updates
                  (for/list ([i args])
                    (define v (get-field sn i))
-                   (cons i (@concretize v))))
+                   (define+time (v* concretize-time)
+                                (cons i (@concretize v)))
+                   (printf "  concretized ~a in ~a ms~n" i concretize-time)
+                   v*))
                (set! sn (update-fields sn updates))])))
         (not (not this-hint)))
       (when any-hints
@@ -320,3 +340,129 @@
       (printf "finished in ~as~n" t)
       (printf "failed to prove (took ~as)~n" t))
   verified)
+
+(define (run-with-hints
+         symbolic-constructor
+         #:invariant invariant
+         #:step step
+         #:reset reset
+         #:reset-active reset-active
+         #:post-reset post-reset
+         #:inputs inputs
+         #:hints [hints (lambda _ #f)]
+         #:limit limit
+         #:debug [debug (lambda _ #f)])
+  (define s0-with-inv (with-invariants (symbolic-constructor) invariant))
+  (define statics (or (hints 'statics) '()))
+  (unless (verify-statics s0-with-inv step statics)
+    (error 'verify-deterministic-start "failed to prove statics"))
+  (define s0 (update-field s0-with-inv reset (if (eq? reset-active 'low) #f #t)))
+  (define allowed-dependencies (list->weak-seteq (static-values statics s0)))
+  (define sn s0)
+
+  (define+time (res total-time)
+    (for/last ([cycle (in-range (add1 limit))])
+      (printf "  cycle ~a~n" cycle)
+
+      (define+time (any-hints hint-time)
+        (define this-hint (hints 'general cycle sn))
+        (when this-hint
+          (for ([hint this-hint])
+            (match hint
+              ; without gc, allowed-dependencies can grow very big
+              ;
+              ; we could prune it by intersecting it with (@symbolics sn),
+              ; but it seems like using a weak set and using gc is actually faster
+              ['collect-garbage (collect-garbage)]
+              [(cons 'abstract-or-overapprox-vector args)
+               (define updates
+                 (for/list ([i args])
+                   (define v (get-field sn i))
+                   #:break (not (vector? v))
+                   (cons i
+                         (for/vector ([entry v]
+                                      [num (in-naturals)])
+                           (define ok (only-depends-on-fast entry allowed-dependencies))
+                           (define v* (@fresh-symbolic (format "~a[~a]" i num) (@type-of entry)))
+                           (when ok
+                             (set-add! allowed-dependencies v*))
+                           v*))))
+               (set! sn (update-fields sn updates))]
+              [(cons 'abstract args)
+               ; like overapproximate, but we are allowed to depend on the fresh value
+               ; because we prove that the term we're replacing only depends on inputs
+               ;(define allowed-deps-list (set->list allowed-dependencies))
+               (define updates
+                 (for/list ([i args])
+                   (define+time (v abstract-time)
+                     (define v (get-field sn i))
+                     (define ok (@unsat? (only-depends-on* v allowed-dependencies)))
+                     (unless ok
+                       (printf "warning: failed to abstract ~a~n" i))
+                     (cons i (if ok
+                                 (if (vector? v)
+                                     (let ([v* (@fresh-memory-like i v)])
+                                       (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                                       v*)
+                                     (let ([v* (@fresh-symbolic i (@type-of v))])
+                                       (set-add! allowed-dependencies v*)
+                                       v*))
+                                 v)))
+                   (printf "    abstracted ~a in ~a ms~n" i abstract-time)
+                   v))
+               (set! sn (update-fields sn updates))]
+              [(cons 'overapproximate args)
+               (define updates
+                 (for/list ([i args])
+                   (define v (get-field sn i))
+                   (define v* (if (vector? v)
+                                  (@fresh-memory-like i v)
+                                  (@fresh-symbolic i (@type-of v))))
+                   (cons i v*)))
+               (set! sn (update-fields sn updates))]
+              [(cons 'concretize args)
+               (define updates
+                 (for/list ([i args])
+                   (define v (get-field sn i))
+                   (define+time (v* concretize-time)
+                                (cons i (@concretize v)))
+                   (printf "    concretized ~a in ~a ms~n" i concretize-time)
+                   v*))
+               (set! sn (update-fields sn updates))])))
+        (not (not this-hint)))
+      (when any-hints
+        (printf "    handled hints in ~ams~n" (~r hint-time #:precision 1)))
+
+      (let ([sn* (debug cycle sn)])
+        (when sn*
+          (set! sn sn*)))
+
+      (if (= cycle limit)
+          sn
+          (let ()
+            (define+time (sn+1 step-time)
+              (let ([sn* (step sn)])
+                (if (zero? cycle)
+                    (post-reset sn*)
+                    sn*)))
+            (printf "    stepped in ~ams~n" (~r step-time #:precision 1))
+
+            (define current-inputs
+              (for/list ([i (cons reset inputs)]) ; append reset just in case it's not present
+                (cond
+                  [(pair? i) i] ; pre-set value
+                  [(eq? i reset) (cons i (if (eq? reset-active 'low) #t #f))] ; special-case reset
+                  [else ; symbol
+                   (define v (get-field sn i))
+                   (cons i (if (vector? v)
+                               (let ([v* (@fresh-memory-like i v)])
+                                 (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                                 v*)
+                               (let ([v* (@fresh-symbolic i (@type-of v))])
+                                 (set-add! allowed-dependencies v*)
+                                 v*)))])))
+            (set! sn (update-fields sn+1 current-inputs))
+            #f))))
+  (define t (~r (/ total-time 1000) #:precision 1))
+  (printf "executed ~a cycles in ~as~n" limit t)
+  res)
