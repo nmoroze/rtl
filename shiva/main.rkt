@@ -132,6 +132,22 @@
   (define value-rest-symbolics (set-subtract value-symbolics constants))
   (set-empty? value-rest-symbolics))
 
+; generate inputs
+(define (generate-inputs! sn cycle reset reset-active inputs allowed-dependencies)
+  (for/list ([i (cons reset inputs)]) ; append reset just in case it's not present
+    (cond
+      [(pair? i) i] ; pre-set value
+      [(eq? i reset) (cons i (if (xor (zero? cycle) (eq? reset-active 'low)) #t #f))] ; special-case reset
+      [else ; symbol
+       (define v (get-field sn i))
+       (cons i (if (vector? v)
+                   (let ([v* (@fresh-memory-like i v)])
+                     (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
+                     v*)
+                   (let ([v* (@fresh-symbolic i (@type-of v))])
+                     (set-add! allowed-dependencies v*)
+                     v*)))])))
+
 ; symbolic-constructor: returns fully symbolic module
 ; statics: captures static state in module (that can't change at all, e.g. due to dead code); untrusted
 ;
@@ -165,14 +181,7 @@
       (printf "cycle ~a~n" cycle)
 
       (define current-inputs
-        (for/list ([i (cons reset inputs)]) ; append reset just in case it's not present
-          (cond
-            [(pair? i) i] ; pre-set value
-            [(eq? i reset) (cons i (if (xor (zero? cycle) (eq? reset-active 'low)) #t #f))] ; special-case reset
-            [else ; symbol
-             (define s (@fresh-symbolic i (@type-of (get-field sn i))))
-             (set-add! allowed-dependencies s)
-             (cons i s)])))
+        (generate-inputs! sn cycle reset reset-active inputs allowed-dependencies))
       (set! sn (update-fields sn current-inputs))
 
       (define+time (any-hints hint-time)
@@ -356,13 +365,16 @@
   (define statics (or (hints 'statics) '()))
   (unless (verify-statics s0-with-inv step statics)
     (error 'verify-deterministic-start "failed to prove statics"))
-  (define s0 (update-field s0-with-inv reset (if (eq? reset-active 'low) #f #t)))
-  (define allowed-dependencies (list->weak-seteq (static-values statics s0)))
-  (define sn s0)
+  (define allowed-dependencies (list->weak-seteq (static-values statics s0-with-inv)))
+  (define sn s0-with-inv)
 
   (define+time (res total-time)
     (for/last ([cycle (in-range (add1 limit))])
       (printf "  cycle ~a~n" cycle)
+
+      (define current-inputs
+        (generate-inputs! sn cycle reset reset-active inputs allowed-dependencies))
+      (set! sn (update-fields sn current-inputs))
 
       (define+time (any-hints hint-time)
         (define this-hint (hints 'general cycle sn))
@@ -446,22 +458,7 @@
                     (post-reset sn*)
                     sn*)))
             (printf "    stepped in ~ams~n" (~r step-time #:precision 1))
-
-            (define current-inputs
-              (for/list ([i (cons reset inputs)]) ; append reset just in case it's not present
-                (cond
-                  [(pair? i) i] ; pre-set value
-                  [(eq? i reset) (cons i (if (eq? reset-active 'low) #t #f))] ; special-case reset
-                  [else ; symbol
-                   (define v (get-field sn i))
-                   (cons i (if (vector? v)
-                               (let ([v* (@fresh-memory-like i v)])
-                                 (set-union! allowed-dependencies (list->weak-seteq (vector->list v*)))
-                                 v*)
-                               (let ([v* (@fresh-symbolic i (@type-of v))])
-                                 (set-add! allowed-dependencies v*)
-                                 v*)))])))
-            (set! sn (update-fields sn+1 current-inputs))
+            (set! sn sn+1)
             #f))))
   (define t (~r (/ total-time 1000) #:precision 1))
   (printf "executed ~a cycles in ~as~n" limit t)
