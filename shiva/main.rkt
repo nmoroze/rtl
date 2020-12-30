@@ -330,7 +330,7 @@
         (define outputs (map (lambda (f) (cons (car f) ((cdr f) sn+1))) output-getters))
         (for/or ([name-value outputs])
           (match-define (cons name value) name-value)
-          (define r (@only-depends-on/unchecked value allowed-dependencies))
+          (define r (only-depends-on* value allowed-dependencies))
           (if (@unsat? r) #f (list name value r))))
       (when (not (empty? output-getters))
         (printf "  analyzed outputs in ~ams~n" (~r output-analysis-time #:precision 1)))
