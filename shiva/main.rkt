@@ -7,6 +7,7 @@
          (for-syntax racket/base syntax/parse))
 
 (provide
+ check-deterministic-state
  (contract-out
   [with-invariants (->*
                     (yosys-module? (-> yosys-module? any))
@@ -148,6 +149,30 @@
                      (set-add! allowed-dependencies v*)
                      v*)))])))
 
+(define (check-deterministic-state sn state-getters allowed-dependencies print-style)
+  (define states (map (lambda (f) (cons (car f) ((cdr f) sn))) state-getters))
+  (define any-failed
+    (for/or ([name-value states])
+      (match-define (cons name value) name-value)
+      (define r (only-depends-on* value allowed-dependencies))
+      (if (@unsat? r) #f (list name value r))))
+  (if (not any-failed)
+      (let ()
+        (displayln " --> unsat!")
+        (@unsat))
+      (let ()
+        (match-define (list name value r) any-failed)
+        (cond
+          [(@unknown? r)
+           (displayln "warning: determinism check returned (unknown), treating as SAT and continuing")]
+          ; can't be @unsat?, we checked for that earlier
+          [else
+           (displayln "  -> sat!")
+           (case print-style
+             [(names) (printf "  ~a~n" name)]
+             [(full) (printf "  ~a: ~v~n" name value)])])
+        r)))
+
 ; symbolic-constructor: returns fully symbolic module
 ; statics: captures static state in module (that can't change at all, e.g. due to dead code); untrusted
 ;
@@ -279,29 +304,7 @@
 
       (define+time (res state-analysis-time)
         (if (>= cycle try-verify-after)
-            (let ()
-              (define states (map (lambda (f) (cons (car f) ((cdr f) sn))) state-getters))
-              (define any-failed
-                (for/or ([name-value states])
-                  (match-define (cons name value) name-value)
-                  (define r (only-depends-on* value allowed-dependencies))
-                  (if (@unsat? r) #f (list name value r))))
-              (if (not any-failed)
-                  (let ()
-                    (displayln " --> unsat!")
-                    (@unsat))
-                  (let ()
-                    (match-define (list name value r) any-failed)
-                    (cond
-                      [(@unknown? r)
-                       (displayln "warning: determinism check returned (unknown), treating as SAT and continuing")]
-                      ; can't be @unsat?, we checked for that earlier
-                      [else
-                       (displayln "  -> sat!")
-                       (case print-style
-                         [(names) (printf "  ~a~n" name)]
-                         [(full) (printf "  ~a: ~v~n" name value)])])
-                    r)))
+            (check-deterministic-state sn state-getters allowed-dependencies print-style)
             #f))
 
       (let ([sn* (debug cycle sn res)])
