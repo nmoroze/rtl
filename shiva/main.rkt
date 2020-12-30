@@ -212,18 +212,21 @@
                (let ([hints (car args)]
                      [i (cdr args)])
                  (printf "  performing auxilary run to get replacement value for ~a:~n" i)
-                 (define res (run-with-hints
-                              symbolic-constructor
-                              #:invariant invariant
-                              #:step step
-                              #:reset reset
-                              #:reset-active reset-active
-                              #:post-reset post-reset
-                              #:inputs inputs
-                              #:hints hints
-                              #:limit cycle))
+                 (define-values (res new-deps)
+                   (run-with-hints
+                    symbolic-constructor
+                    #:invariant invariant
+                    #:step step
+                    #:reset reset
+                    #:reset-active reset-active
+                    #:post-reset post-reset
+                    #:inputs inputs
+                    #:hints hints
+                    #:limit cycle))
+                 (set-union! allowed-dependencies new-deps)
                  (if res
-                     (set! sn (update-field sn i (get-field res i)))
+                     (for ([f i])
+                       (set! sn (update-field sn f (get-field res f))))
                      (printf "  could not replace field ~a: auxilary execution failed~n")))]
               [(cons 'abstract args)
                ; like overapproximate, but we are allowed to depend on the fresh value
@@ -462,4 +465,4 @@
             #f))))
   (define t (~r (/ total-time 1000) #:precision 1))
   (printf "executed ~a cycles in ~as~n" limit t)
-  res)
+  (values res allowed-dependencies))
