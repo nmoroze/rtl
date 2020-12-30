@@ -28,7 +28,7 @@
                                 #:try-verify-after natural-number/c
                                 #:limit (or/c #f natural-number/c)
                                 #:debug (-> natural-number/c yosys-module? (or/c #f @solution?) (or/c #f yosys-module?)))
-                               (or/c #f natural-number/c))]))
+                               (values (or/c #f natural-number/c) yosys-module? set-weak?))]))
 
 (define wire-constant?
   (flat-named-contract
@@ -228,6 +228,10 @@
                      (for ([f i])
                        (set! sn (update-field sn f (get-field res f))))
                      (printf "  could not replace field ~a: auxilary execution failed~n")))]
+              [(cons 'untrusted-custom-hint custom-hint)
+               (let ([res (custom-hint sn allowed-dependencies)])
+                 (when res
+                   (set! sn res)))]
               [(cons 'abstract args)
                ; like overapproximate, but we are allowed to depend on the fresh value
                ; because we prove that the term we're replacing only depends on inputs
@@ -351,7 +355,7 @@
   (if verified
       (printf "finished in ~as~n" t)
       (printf "failed to prove (took ~as)~n" t))
-  verified)
+  (values verified sn allowed-dependencies))
 
 (define (run-with-hints
          symbolic-constructor
