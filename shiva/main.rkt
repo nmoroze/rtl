@@ -253,7 +253,7 @@
                      (for ([f i])
                        (set! sn (update-field sn f (get-field res f))))
                      (printf "  could not replace field ~a: auxilary execution failed~n")))]
-              [(cons 'untrusted-custom-hint custom-hint)
+              [(cons 'unsafe-custom-hint custom-hint)
                (let ([res (custom-hint sn allowed-dependencies)])
                  (when res
                    (set! sn res)))]
