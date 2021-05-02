@@ -40,10 +40,10 @@
      (@define-symbolic* fresh (@type-of value))
      (define res
        (@verify
-        #:assume (@assert invariant)
-        #:guarantee
-        (@assert
-         (@exists (list fresh)
-                  (@forall (set->list value-rest-symbolics)
-                           (@equal? value fresh))))))
+        (begin
+          (@assume invariant)
+          (@assert
+           (@exists (list fresh)
+                    (@forall (set->list value-rest-symbolics)
+                             (@equal? value fresh)))))))
      res]))
